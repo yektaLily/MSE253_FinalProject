@@ -1,0 +1,163 @@
+---
+title: "PR2_MSE253"
+author: "Yekta Amirkhalili"
+date: "2025-07-08"
+output: html_document
+---
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+# Question 1 
+```{r}
+set.seed(123)  # for reproducibility
+
+# Sample size
+n_city <- 1500
+
+# Simulate responses: let's say only 52% prefer mobile apps in your city
+true_city_proportion <- 0.52
+
+# Generate data: 1 = prefers mobile app, 0 = prefers desktop
+city_sample <- rbinom(n = n_city, size = 1, prob = true_city_proportion)
+
+head(city_sample)
+
+```
+
+```{r}
+write.csv(city_sample, "PRJ2_MP1_PT.csv")
+```
+
+
+```{r}
+# Quick summary
+table(city_sample)
+prop_city <- mean(city_sample)
+cat("Sample proportion preferring mobile in city:", prop_city, "\n")
+
+
+```
+
+```{r}
+# Hypothesis Test: One-sample proportion test
+# H0: p = 0.60
+# H1: p ≠ 0.60
+test_result <- prop.test(x = sum(city_sample), n = n_city, p = 0.60, alternative = "two.sided", correct = FALSE)
+print(test_result)
+
+```
+
+
+# Q2. 
+```{r}
+set.seed(123)
+df2 <- data.frame(
+    strategy1 = round(rnorm(1500, 57, 3),3),
+    strategy2 = round(rnorm(1500, 88, 5),3)
+)
+
+head(df2)
+write.csv(df2, "PRJ2_MP1_DM.csv")
+```
+
+
+# MP1, Q3.
+```{r}
+set.seed(123)
+
+# Simulated delivery times (in minutes)
+partner1 <- rnorm(100, mean = 30, sd = 5)   # Partner 1: mean 30, sd 5
+partner2 <- rnorm(100, mean = 32, sd = 7)   # Partner 2: mean 32, sd 7
+
+# Combine into a data frame
+df3 <- data.frame(
+  delivery_time = c(partner1, partner2),
+  partner = factor(rep(c("Partner1", "Partner2"), each = 100))
+)
+
+write.csv(df3, "PRJ2_MP1_VT.csv")
+
+# View first few rows
+head(df3)
+
+# F-test for equal variances
+var.test(delivery_time ~ partner, data = df3)
+
+```
+
+
+# MP 2 
+```{r}
+set.seed(42)  # for reproducibility
+
+# Roast levels
+roast_levels <- c("Light", "Medium", "Dark")
+
+# Generate scores (mean scores slightly differ to simulate real effect)
+ratings <- data.frame(
+  Roast = rep(roast_levels, each = 50),
+  Score = c(
+    round(rnorm(50, mean = 6.5, sd = 0.5), 2),  # Light roast
+    round(rnorm(50, mean = 8.5, sd = 0.5), 2),  # Medium roast
+    round(rnorm(50, mean = 4.0, sd = 0.5), 2)   # Dark roast
+  )
+)
+
+# Clip scores to stay between 1 and 10
+ratings$Score <- pmin(pmax(ratings$Score, 1), 10)
+
+# View first few rows
+print(ratings)
+
+# Save as CSV if needed
+write.csv(ratings, "PRJ2_MP2.csv", row.names = FALSE)
+
+```
+```{r}
+# One-way ANOVA
+anova_result <- aov(Score ~ Roast, data = ratings)
+summary(anova_result)
+
+```
+
+```{r}
+# Tukey's Honestly Significant Difference test
+tukey_result <- TukeyHSD(anova_result)
+print(tukey_result)
+
+```
+```{r}
+library(ggplot2)
+
+ggplot(ratings, aes(x = Roast, y = Score, fill = Roast)) +
+  geom_boxplot() +
+  labs(title = "Taste Ratings by Coffee Roast Level",
+       x = "Roast Level", y = "Score (1–10)") +
+  theme_minimal()
+
+```
+
+
+
+# Q3 
+```{r}
+df4 <- read.csv("airbnb.csv")
+```
+
+```{r}
+glimpse(df4)
+```
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,460 @@
+---
+title: "PR2-Solution"
+author: "Yekta Amirkhalili"
+date: "today"
+format:
+  html:
+    toc: true
+    toc-title: "Table of Contents"
+    toc-depth: 2
+    number-sections: true
+    fig-width: 6
+    fig-height: 4
+    math:
+      engine: mathjax
+    code-fold: false
+    code-tools: true
+    self-contained: false
+    execute:
+      eval: true 
+      echo: true
+      warning: false
+      message: false
+      error: false
+      results: 'asis'
+---
+
+<style>
+.quarto-title h1.title {
+  font-size: 1.5rem; 
+}
+
+h2{
+    font-size: 1.2rem;
+    background-color:rgba(128, 170, 156, 0.48);
+}
+
+.future-idea-box {
+  border: 2px solid var(--quarto-hl-header-color, #86bdab); /* Uses Quarto header color variable or fallback */
+  border-radius: 8px;
+  padding: 1em;
+  margin: 1em 0;
+  background: #f9f9fc;
+}
+.future-idea-title {
+  font-weight: bold;
+  color: var(--quarto-hl-header-color,rgb(111, 172, 152));
+  margin-bottom: 0.5em;
+  font-size: 1.1em;
+}
+
+.blue-text {
+  color: rgba(70, 70, 194, 1);
+}
+
+</style>
+<!-- CSS CHANGES -->
+
+All text in blue is written by intructor as the answer/explanation to the question.
+
+## Mini-Project 1: Hypothesis Testing [30p]
+
+The following R libraries are used:
+```{r} 
+#| eval: true 
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(psych)
+library(tidyr)
+```
+
+
+### Proportion Test
+A survey finds that 60% of users prefer using mobile apps over desktop websites for booking appointments. 
+Your company believes the proportion is different in your city.
+Use the `PRJ2_MP1_PT.csv` dataset to test whether the local preference differs from the national figure.
+
+:::{.blue-text}
+I will use a one-sample z-test for proportions to test the hypothesis. 
+
+Summarizing question's information: 
+
+* proportion of users who prefer apps over desktop websites is 60/100. 
+* I have data from my city. 
+* Is the proportion I have in my city different from the 60% national figure?
+
+Mathamtically, that is: 
+
+$$
+H_0: p = 0.6
+$$
+vs 
+$$
+H_a: p \neq 0.6
+$$
+Where $p$ is the proportion of users in my city who prefer apps over desktop websites.
+Since significance level is not given, I will use the default of 0.05.
+The test statistic is calculated as follows:
+$$
+z = \frac{\hat{p} - p_0}{\sqrt{\frac{p_0(1 - p_0)}{n}}}
+$$
+where $\hat{p}$ is the sample proportion, $p_0$ is the population proportion, and $n$ is the sample size.
+The critical region for a two-tailed test at the 0.05 significance level is $|z| > z_{\alpha/2} = 1.96$. 
+Chapter 10, Example 10.9 and 10.10 would be helpful. 
+:::
+
+```{r}
+#| eval: true
+df1 <- read_csv("data/PRJ2_MP1_PT.csv")
+head(df1)
+```
+
+:::{.blue-text}
+Let's summarize the data to see how many of each we have: 
+:::
+```{r}
+df1 %>%
+  group_by(Preference) %>% 
+  count(Preference) %>% 
+  arrange(desc(n))
+```
+
+:::{.blue-text}
+Add proportion to this: 
+:::
+```{r}
+df1 %>%
+  group_by(Preference) %>% 
+  count(Preference) %>% 
+  ungroup() %>%
+  mutate(Proportion = n / sum(n)) %>%
+  arrange(desc(n))
+```
+
+:::{.blue-text}
+Already looks kind of close to 60%, but also not really depending on who you ask (52%) - so which is it? 
+You can either calculate the z value and compare it to the critical value, or use the `prop.test` function in R.
+This test takes in the number of successes (in this case, the number of users who prefer mobile apps), the total number of observations, the hypothesized proportion, and the alternative hypothesis's one tailed or two-tailedness.
+:::
+
+```{r}
+prop.test(
+  x = sum(df1$Preference == "Mobile App"),
+  n = nrow(df1),
+  p = 0.60,
+  alternative = "two.sided",
+  correct = FALSE # optional 
+)
+```
+
+:::{.blue-text}
+The p-value is quite small, so we reject the null hypothesis.
+The null hypothesis was that the proportion of users who prefer mobile apps is 60%, and we found that it is significantly different from this value.
+The 95% confidence interval for the proportion of users who prefer mobile apps is (0.42, 0.54), which does not include 0.6.
+:::
+
+### Difference in Means  
+Two customer service strategies were implemented in your company.
+The customer satisfaction scores are collected and saved in `PRJ2_MP1_DM.csv`. 
+Test whether the mean satisfaction differs significantly between the two strategies.
+
+:::{.blue-text}
+I will use a two-sample t-test to test the difference in means between the two customer service strategies.
+The hypotheses are as follows:
+$$
+H_0: \mu_1 - \mu_2 = 0
+$$
+vs
+$$
+H_a: \mu_1 - \mu_2 \neq 0
+$$
+Where $\mu_1$ is the mean satisfaction score for strategy 1 and $\mu_2$ is the mean satisfaction score for strategy 2.
+The significance level is not given, so I will use the default of 0.05.
+The test statistic is calculated based on chapter 10.5 of Walpole book.
+:::
+    
+:::{.blue-text}
+Let's first look at the data and see the difference between the two strategies.
+:::
+
+```{r}
+df2 <- read_csv("data/PRJ2_MP1_DM.csv")
+glimpse(df2)
+```
+
+```{r}
+df2 %>% dplyr::summarize(
+    stg1_mean = mean(strategy1, na.rm = TRUE),
+    stg2_mean = mean(strategy2, na.rm = TRUE)
+)
+```
+
+:::{.blue-text}
+It seems that the mean satisfaction score for strategy 1 is much lower than for strategy 2. But, is it significantly different?
+Let's see the tests for the cases where: 
+
+* Variances are known or unknown and equal
+* Variances are unknown and unequal
+:::
+
+```{r}
+# Variances are known or unknown and equal
+t.test(df2$strategy1, df2$strategy2, var.equal = TRUE)
+```     
+
+    
+:::{.blue-text}
+Since the p-value is less than 0.05, we reject the null hypothesis and conclude that there is a significant difference in mean satisfaction scores between the two strategies.
+That is, $\mu_1 - \mu_2 \neq 0$.
+:::
+
+
+```{r}
+# Variances are unknown and unequal
+t.test(df2$strategy1, df2$strategy2, var.equal = FALSE)
+```
+    
+:::{.blue-text}
+Similarly, if variances were unknown and unequal, we would still reject the null hypothesis.
+Let's see if we can say something about the variances: 
+:::
+
+```{r}
+var.test(df2$strategy1, df2$strategy2)
+```
+
+    
+:::{.blue-text}
+Looks like variances are not equal, so we should use the second t-test result.
+Another way to check means (and variance) between the two groups is using visualizations (but much less formal):
+:::
+
+```{r}
+df2 %>%
+  pivot_longer(
+    cols = c(strategy1, strategy2), 
+    names_to = "strategyName", 
+    values_to = "strategySatisfaction") %>%
+  ggplot(aes(x=strategyName, y=strategySatisfaction)) + 
+  geom_boxplot() +
+  xlab("Strategy") + ylab("Satisfaction") + 
+  theme_classic()
+```
+
+
+### Variance Test 
+You are analyzing consistency in delivery times between two delivery partners.
+The dataset is available in `PRJ2_MP1_VT.csv`.
+Test whether their delivery time variances are equal.
+
+:::{.blue-text}
+All tests are based on Walpole's book, chapter 10.10. 
+We want to test the following hypotheses:
+$$
+H_0: \sigma_1^2 = \sigma_2^2
+$$          
+vs
+$$
+H_a: \sigma_1^2 \neq \sigma_2^2
+$$
+Where $\sigma_1^2$ is the variance of delivery times for partner 1 and $\sigma_2^2$ is the variance for partner 2.  
+We do have to assume the two samples are independent.
+Since the significance level is not given, I will use the default of 0.05.
+Look at example 10.13 for more details.
+Let's look at the data first and check the variances:
+:::
+
+```{r}
+df3 <- read_csv("data/PRJ2_MP1_VT.csv")
+glimpse(df3)
+```     
+
+```{r}
+df3 %>% group_by(partner) %>% dplyr::summarize(variance = var(delivery_time))
+```
+
+:::{.blue-text}
+So, we need to separate the data by partner and then use the `var.test` function to test the variances.
+:::
+
+```{r}
+partner1 <- df3 %>% filter(partner == "Partner1") %>% pull(delivery_time)
+
+partner2 <- df3 %>% filter(partner == "Partner2") %>% pull(delivery_time)
+
+var.test(partner1, partner2)
+
+```
+
+:::{.blue-text}
+The null hypothesis is that the variances are equal, and the alternative hypothesis is that they are not equal.
+The p-value is 0.0001, which is less than the significance level of 0.05.
+Therefore, we reject the null hypothesis and conclude that the variances of delivery times between the two partners are significantly different.
+This means that one partner is more consistent than the other.
+:::
+
+---
+
+## Mini-Project 2 [30p]
+You work for a coffee company as a data scientist.
+The company wants to find out which roasting level leads to the highest average rating from customers.
+You conduct taste tests and collect scores from 50 random customers for each roast level.
+The results of this is collected in the `PRJ2_MP2.csv` file.
+Write clearly the statistical question you want to answer, your methodology in answering the question and your results. 
+If you find that there are differences between roast levels, determine which groups differ. 
+Finally, complete your analysis by discussing what the findings mean practically and what you suggest to your company to do next.
+
+:::{.blue-text}
+The statistical question we want to answer is: "Which roasting level leads to the highest average rating from customers?"
+We will use ANOVA to test whether there are significant differences in ratings between the different roast levels.
+The null hypothesis is that there are no differences in ratings between the roast levels, while the alternative hypothesis is that at least one roast level has a different mean rating.
+We will use a significance level of 0.05.
+If we find significant differences, we will use post-hoc tests to determine which roast levels differ from each other.
+Finally, we will interpret the results and provide practical recommendations to the company.
+:::
+
+```{r}
+df4 <- read_csv("data/PRJ2_MP2.csv")
+glimpse(df4)
+```
+
+```{r}
+df4 %>% group_by(Roast) %>% 
+    dplyr::summarize(
+        mean_rating = mean(Score, na.rm = TRUE))
+```
+
+:::{.blue-text}
+Looks like medium has the highest mean rating, but we need to test if this is statistically significant.
+:::
+
+```{r}
+anova_result <- aov(Score ~ as.factor(Roast), data = df4)
+summary(anova_result)
+```
+
+:::{.blue-text}
+There is a difference in means between the roast levels, as the p-value is less than 0.05.
+Therefore, we know that roast level matters!
+Now, we need to perform post-hoc tests to determine which roast levels differ from each other.
+We will use Tukey's HSD test for this purpose.
+:::
+
+```{r}
+tukey_result <- TukeyHSD(anova_result)
+tukey_result    
+```
+
+:::{.blue-text}
+Another way to do this: 
+
+* Separate the data by roast level and create the covariates (go to your notes and see Indicator variables)
+$$
+y = \mu + \tau_1 (I(L) - I(D)) + \tau_2 (I(M) - I(D)) + \epsilon
+$$
+* Make pairwise comparisons between the roast levels, creating a new value from the other two (factor levels)
+* Use a linear model 
+* Use tukey's and bonferroni 
+:::
+
+```{r}
+df4$Roast <- factor(df4$Roast, levels = c("Dark", "Light", "Medium"))
+
+# Set up custom contrasts: 
+# First column: Light vs Dark
+# Second column: Medium vs Dark
+contrasts(df4$Roast) <- matrix(
+  c(
+    -1,  0,  # Dark
+     1,  0,  # Light
+     0,  1   # Medium
+  ),
+  ncol = 2
+)
+colnames(contrasts(df4$Roast)) <- c("Light_vs_Dark", "Medium_vs_Dark")
+
+
+contrast_model <- lm(Score ~ Roast, data = df4)
+summary(contrast_model)
+```
+
+:::{.blue-text}
+From the results, we have: $\mu = 6.482$, $\tau_1 = 2.558$, and $\tau_2 = -0.490$.
+We need to calculate the t-statistic: 
+$$
+t = \frac{\hat{\tau}_i - \hat{\tau}_j}{\sqrt{2\frac{\sigma^2}{n}}}
+$$
+Critical values for multiple comparisons:
+:::
+
+
+```{r}
+sigma_sq <- 0.5037 # from contrast_model summary 
+denom <- sqrt(2 * sigma_sq / 50) # 50 is the number of observations per group
+
+tau_light_vs_medium <- -(2.55820 - 0.49040)
+
+t_light_vs_dark <- (2.55820) / denom
+t_medium_vs_dark <- (-0.49040) / denom
+t_light_vs_medium <- tau_light_vs_medium / denom 
+
+
+```
+
+:::{.blue-text}
+Now compare these with bonferroni and tukey's critical values:
+:::
+
+```{r}
+# Bonferroni critical value
+bonferroni_critical <- qt(1 - 0.05 / 3, 147)
+# 147 is the number of observations - 3 (number of groups)
+
+# Tukey's critical value
+tukey_critical <- qtukey(0.95, 3, 147) / sqrt(2)
+
+print(paste("bonferonni", round(bonferroni_critical,3), " Tukey", round(tukey_critical,3)))
+```
+
+```{r}
+print(paste(t_light_vs_dark > bonferroni_critical, "and ", t_light_vs_dark > tukey_critical))
+```
+
+
+```{r}
+print(paste(t_medium_vs_dark > bonferroni_critical, "and ", t_medium_vs_dark > tukey_critical))
+```
+
+
+```{r}
+print(paste(t_light_vs_medium > bonferroni_critical,"and ", t_light_vs_medium > tukey_critical))    
+```
+
+:::{.blue-text}
+Since if $t_{ij} > t_{crit}$, then we can reject the null hypothesis that the two means are equal.
+Therefore, only ones different are light vs dark. 
+So, $\mu_{light} \neq \mu_{dark}$.
+Since these two groups are different, maybe the company should focus on improving the dark roast to match the light roast's quality so the dark roast rating isn't so low.
+:::
+
+
+
+## Mini-Project 3: Linear Regression Analysis [40p]
+Download the `PRJ2_MP3_airbnb.csv` dataset either from LEARN or from [Kaggle](https://www.kaggle.com/datasets/aroramahima1/amsterdam-airbnb-prices-dataset/data).
+This dataset has 33 columns and $7,833$ rows of Airbnb listings from Amsterdam. 
+Use this dataset to predict the price of Airbnb listings in Amsterdam using linear regression. 
+Make sure you clean and pre-process the dataset, include exploratory data analysis, check regression assumptions, and set aside 20% of the dataset as your test data. 
+You do not need to include all the variables (columns) in the model, but your final prediction accuracy (as long as overfitting is not an issue) will be graded. 
+Include a correlation matrix with the model variables before you do the modeling. 
+
+Make sure you can justify any variable that is included in your model (using literature or data). 
+Check for multi-collinearity and normality of residuals. 
+Most importantly, interpret the regression results: 
+Which predictors are significant?
+What does the coefficient of each mean in real-world terms?
+How good is your model? 
+Be sure to explain your findings in simple, real-world terms.
+For example: ``Each additional bedroom increases the price by $85 on average, holding other variables constant.''
+Write your regression model's mathematical formula and introduce the notation in a Table.  
+
