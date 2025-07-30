@@ -55,7 +55,26 @@ h2{
 </style>
 <!-- CSS CHANGES -->
 
-All text in blue is written by intructor as the answer/explanation to the question.
+
+
+# Introducing the page 
+
+Hello and welcome. 
+This page is written as a solution by Yekta Amirkhalili.
+I am PhD candidate at the University of Waterloo, department of Managment Science and Engineering. 
+In Spring 2025, I was a lecturer for MSE 253 - Probability and Statistics 2.
+This is my students' final term project.
+I thought it would be useful to provide a solution manual.  
+All text in blue is written by me as the instructor as answer/explanation to the question.
+The question body is in black. 
+The main point of this document is to be used for learning. 
+It's not really a portfolio project example, the focus really is to teach. 
+Feel free to try and solve the questions on your own and check with my answers. 
+I hope this is useful and you learn from it. 
+I've also included a section to show you how I would use AI (chatGPT in this case) for coding or data analysis questions. 
+Always cite it when you use it, and make sure its answer actually make sense! 
+The code is written in **R**. 
+
 
 ## Mini-Project 1: Hypothesis Testing [30p]
 
@@ -67,6 +86,13 @@ library(dplyr)
 library(ggplot2)
 library(psych)
 library(tidyr)
+library(Hmisc)
+library(corrr)
+library(ggpubr)
+library(pheatmap)
+library(forcats)
+library(rsample)
+
 ```
 
 
@@ -458,3 +484,1163 @@ Be sure to explain your findings in simple, real-world terms.
 For example: ``Each additional bedroom increases the price by $85 on average, holding other variables constant.''
 Write your regression model's mathematical formula and introduce the notation in a Table.  
 
+:::{.blue-text}
+Let's begin with reading the data and addressing the train and test split. 
+:::
+
+
+```{r}
+df <- read.csv("data/PRJ2_MP3_airbnb.csv")
+
+glimpse(df)
+```
+
+:::{.blue-text}
+The task is to predict the price of airbnb listing. 
+So, first thing I do is to figure out which column is my outcome variable: `price`. 
+Next, it's asking me to clean the data.
+This could mean anything, but a good first step is to look at the datatypes you have in the dataset to figure out a cleaning process. 
+For strings (character data), you may need to lower case everything so you have consistent casing and you may need to fix some typos. 
+For numeric data, there's more you can do: 
+check the summary statistics to see if there are very obvious outliers (things that don't make sense or don't look like the rest). 
+You can do this by looking at several things: really big numbers, really small numbers, standard deviations, mean vs median and skewness of your data. 
+Another way to do this is through visualizations. 
+From our class discussion, though, we have a solid method: calculate the IQR. 
+Lastly, check for null values. 
+If you have 100 null values in a 7,000-row dataset, it's fine to drop them.
+However, anything more than 10% of your data is huge!
+A better way to address null values is through logic. 
+Check why there are empty cells. 
+Is it human error or does that empty cell actually mean something? 
+If it's meaningful, can you fill it out? 
+Even if it's error, can you still fill it out? 
+For example, can you replace the null values with the median of the non-null entries without changing the overall distribution of the column? 
+We will address these first and then start the model-building. 
+The data analysis part of any project is often about 80% of the effort!
+:::
+
+
+```{r}
+# step 1. outcome (Y) variable is price 
+outcome <- df$price 
+
+# step 2. clean: strings > to lowercase, assume for now no typos 
+df <- df %>% mutate(across(where(is.character), tolower))
+
+# step 3. clean: integers > check summary statistics: 
+psych::describe(df %>% select_if(where(is.numeric))) %>%
+  as.data.frame() %>% 
+  dplyr::select(n, mean, sd, median, min, max, skew)
+```
+
+:::{.blue-text}
+Let's analyze the summary statistics for now. 
+We see already based on the counts in each variable (look at column `n`) that there are some missing values because the numbers are not the same for everything. 
+There are only a few interesting columns I think that are worth looking into.
+This should definitely be done based on literature and what others have done, but let's go ahead with just "intution" for now. 
+I don't care about `host_id`, `id`, `latitude`, `longitude`, `guests_included`, and if we have the aggregate review rating (`review_scores_rating`) I don't really need to have the sub-groups contirbuting to it. 
+Although, you may later want to focus on just one aspect of the review/rating, so let's keep these. 
+For the rest, let's actually get rid of these columns and re-run the analysis. 
+*I will keep id in, but convert it to factor -- this is because it's a good idea to have a unique identifier for things*. 
+:::
+
+
+```{r}
+# Keep a copy of the data 
+df0 <- df
+
+# drop the columns we don't need 
+df <- df %>% dplyr::select(-c(host_id, latitude, longitude, guests_included))
+
+# re-run the analysis 
+# step 3. clean: integers > check summary statistics: 
+psych::describe(df %>% select_if(where(is.numeric))) %>%
+  as.data.frame() %>% 
+  select(n, mean, sd, median, min, max, skew)
+```
+
+:::{.blue-text}
+Let's take a look at what this means: 
+
+* most hosts have been active since 2013 (median), and the SD is only 1 year so we're good there. 
+* most places accomate 2-3 people (SD = 1), this makes sense too. Although, a little bit highly skewed but not super bad. A value greater than 4-5 would be huge. 
+* a place with 8 bathrooms! It's also highly skewed it seems, but the SD is fine. 
+* again, a place with 10 bedrooms (probably the same place with the 8 bathrooms). Not as bad of a skew as the bathroom numbers.
+* Number of beds should match the bedrooms, right? Unless there are rooms that have more than 1 bed in them or they're coundint a queen or king-size bed as 2 beds (allowing for 2 people to share). So, I'm not concerned here with the 16 maximum.
+* Ignore price for now. 
+* one of the places allows for up to 235 extra people! Is this a hotel or what?! What kind of airbnb would allow for up to 235 people?! another red flag here is the large standard deviation (larger than the mean) and the fact that the median is 0 but mean is 13. There's definitely an outlier here! 
+* minimum nights is also kind of skewed, as there's at least one place that's asking for 27 nights! 
+* the difference between the average number of reviews ($13.83$) and the median $5$ is big, but an even bigger indication is the almost double the mean standard deviation of $25.48$! There's definitely discrepancy. I wonder, **are the ratings adjusted for this huge difference?** 
+* the ratings don't seem to be that odd - the mean and median are close, standard deviation makes sense, and it's not too badly skewed. I think they may have adjusted the rating based on the number of reviews. What I mean is: if a place gets 1000 reviews of 100, that's a much better place than a place with 10 reviews that got 100 and 50, for an average of 80 (don't do that math, it might not math!lol)
+* For the rest of the review scores, there's none that really stand out. 
+
+There's unfortunately no information on the Kaggle webpage for the data that would let us know whether the number of reviews were considered in the final review score. 
+So, let's ask chatGPT! 
+Here's my prompt: 
+:::
+
+::: {.custom-box style="background-color: #fff8dc; padding: 1em; border-radius: 5px;"}
+> I'm working with the attached dataset. I see there's a huge discrepancy in the number of reviews (column: number_of_reviews), where the difference between the average number of reviews ($13.83$) and the median $5$ is big, with a standard deviation of $25.48$! There's definitely discrepancy. When I look at the review scores (review_scores_rating), I don't see anything odd. I am wondering though, are the number of reviews considered in this review_scores_rating? How can I find out if it has been? I've checked the data source but they don't mention it. 
+:::
+
+:::{.blue-text}
+Here is chatGPT (4o)'s answer: 
+:::
+
+::: {.custom-box style="background-color: #fff8dc; padding: 1em; border-radius: 5px;"}
+> I'll now calculate the correlation between number_of_reviews and review_scores_rating. That can hint if listings with more reviews tend to have higher or lower scores. 
+> The correlation between number_of_reviews and review_scores_rating is 0.005 — basically zero.
+> **What this means:** There's no relationship between how many reviews a listing has and its review score. So, review scores are not weighted by number of reviews in this dataset. A listing with just 1 review can have the same score as one with 200 reviews.
+:::
+
+:::{.blue-text}
+Never accept a first response, even though it seems like it makes total sense.
+If not for anything, do it for your own learning. 
+So, let's dig in deeper, here's my follow-up prompt: 
+:::
+
+::: {.custom-box style="background-color: #fff8dc; padding: 1em; border-radius: 5px;"}
+> why would number of reviews and review score having low correlation mean that the review score was not weighted by the number of reviews? Can you tell me how it would be different if it were weighted by the number of reviews? What would be the difference then? 
+:::
+
+:::{.blue-text}
+It's answer: 
+:::
+
+::: {.custom-box style="background-color: #fff8dc; padding: 1em; border-radius: 5px;"}
+Great question. Let's break this down simply:
+
+### 🔹 What correlation shows:
+A low correlation (≈ 0) between `number_of_reviews` and `review_scores_rating` means:
+
+* Listings with more reviews don’t consistently get higher or lower scores.
+* Review score doesn’t seem to depend on how many people rated it.
+
+### 🔹 What *weighted* average would mean:
+If `review_scores_rating` were **weighted by number of reviews**, the score you see for each listing would **reflect the total volume of reviews** behind it.
+
+So:
+
+* Listings with **more reviews** would have **more stable scores** (less likely to be extreme).
+* Listings with **fewer reviews** might fluctuate more or show up with extreme scores.
+* You’d expect some relationship — maybe small, but not zero — between review count and score.
+
+### 🔹 Example:
+Say two listings:
+
+* Listing A: 1 review $\rightarrow$ 100
+* Listing B: 200 reviews $\rightarrow$ 95
+
+If the dataset just shows the raw average per listing, both are treated equally.
+
+But if you wanted to show an overall score **weighted across listings**, the second one should count more toward the total score, because it’s based on more opinions.
+
+### 🔹 If it were weighted:
+
+In a **weighted system**, we’d calculate an average like this across all listings:
+
+$$
+Weighted Avg = \frac{\sum ({score}_i \times {numReviews}_i)}{\sum {numReviews}_i}
+$$
+
+This is **not** what the dataset is doing.
+
+### 🔹 What would correlation look like if scores were weighted?
+
+If listings with more reviews had more influence on their visible rating (e.g., due to Bayesian averaging or damping), you'd expect:
+
+* A small positive correlation (higher review count → more “stable” or average score).
+* Outliers (e.g., 1-review listings with 100) would be pushed toward the average.
+
+In short:
+
+* **Low correlation** suggests that review count doesn't influence the rating shown.
+* If scores were adjusted or stabilized based on review count, **you’d expect a non-zero correlation**.
+
+Let me know if you want to simulate what a weighted score would look like!
+:::
+
+:::{.blue-text}
+I would not, but this was a fantastic answer! 
+I really hope you see how tools like chatGPT and other LLMs can be useful like this. 
+Let's review: 
+If there is no correlation between number of reviews and the review score, then that means there is no relationship between the two.
+So, you can think of it as: the number of reviews played no parts in the construction of review score! 
+Since it's not weight adjusted, that's actually the first thing I would change here!
+Then I wouldn't need both columns in a model. 
+:::
+
+
+```{r}
+# find the global average score 
+global_avg <- mean(df$review_scores_rating, na.rm = TRUE)
+
+# Define a weight m — think of it as the minimum number of reviews assumed before we trust the score, I'll set it as the median number of reviews we have 
+m <- 5   
+
+# Now compute the weighted score per row
+df <- df %>% 
+  mutate(
+    weighted_review_score = (number_of_reviews / (number_of_reviews + m)) * review_scores_rating + (m / (number_of_reviews + m)) * global_avg
+  )
+```
+
+:::{.blue-text}
+Before moving to the other columns, let's also visualize some of the columns that I had suspected to be highly skewed: `bathrooms`, `minimum_nights`, `number_of_reviews`.
+I'll also add visualizations for the columns that have oddities: `bedrooms`, and `extra_people`. 
+:::
+
+```{r, fig.width = 9}
+# for visualization, removing the NA's is fine! 
+bthrm <- df %>% filter(!is.na(bathrooms)) %>% 
+  ggplot(aes(x = bathrooms)) +
+  geom_histogram(binwidth = .5, color = "black", 
+                 fill = "white") +
+  xlab("Number of bathrooms")
+
+beds <- df %>% filter(!is.na(bedrooms)) %>% 
+  ggplot(aes(x = bedrooms)) +
+  geom_histogram(binwidth = .5, color = "black", 
+                 fill = "white") +
+  xlab("Number of Bedrooms")
+
+ggarrange(bthrm, beds, ncol = 2) 
+```
+
+
+:::{.blue-text}
+It seems like both number of bathrooms and are skewed to the right (large positive skew value). 
+They don't really scream anything odd to me for now. 
+We need IQR for these two. 
+:::
+
+```{r, fig.width = 9}
+revs <- df %>% filter(!is.na(number_of_reviews)) %>% 
+  ggplot(aes(x = number_of_reviews)) +
+  geom_histogram(binwidth = .5, color = "black", 
+                 fill = "white") +
+  xlab("Number of Reviews")
+
+minight <- df %>% filter(!is.na(minimum_nights)) %>% 
+  ggplot(aes(x = minimum_nights)) +
+  geom_histogram(binwidth = .5, color = "black", 
+                 fill = "white") +
+  xlab("Minimum Number of Nights")
+
+
+ggarrange(revs, minight, ncol = 2) 
+```
+
+:::{.blue-text}
+The number of reviews are very obviously exponential (logarithmic). 
+There are a few high numbers for the minimum number of nights, but most are concentrated around the start. 
+:::
+
+```{r}
+df %>% filter(!is.na(extra_people)) %>% 
+  ggplot(aes(x = extra_people)) +
+  geom_histogram(binwidth = .5, color = "black", 
+                 fill = "white") +
+  xlab("Number of Extra People")
+```
+
+:::{.blue-text}
+This one is the most interseting! 
+A huge proportion are $0$, then it looks perfectly normal, then a huge bump at $50$, and then that $235$, which doesn't show up here because it's probably just $1$ place that looks like that. 
+Let's now address these.
+I'll start by looking at counts in each column. 
+This will show me null values, too. 
+I'll decide what to do for each then. 
+:::
+
+```{r}
+df %>% count(bathrooms) %>% arrange(desc(n))
+```
+
+:::{.blue-text}
+Here, for example, I see that most places have $1$ bathroom, $1.5$ and $2$. 
+Then null.
+However, there's also $0$ in this count. 
+So, the nulls cannot be $0$'s. 
+There are $69$ missing values in `bathrooms`. 
+I won't do anything just yet though. 
+Because let's consider this logically: would number of bathrooms on its own be important in determining the price? 
+Not really. 
+Say, if a place has $10$ bedrooms housing $10$ people but just 1 bathroom -- it's not the same as a $1$ bedroom place housing $1$ person with $1$ bathroom. Right? 
+So, it really should be a proportion of how many people it accomodates (either the `accommodates` or `beds` columns, since they're basically the same, check their summary stats!) to the number of bathrooms. 
+If it's higher than $1.0$, then that's good: it means each person gets at least $1$ bathroom. 
+:::
+
+
+```{r}
+df <- df %>% 
+  mutate(bathroom_per_person = round(bathrooms/accommodates, 3))
+```
+
+
+```{r}
+df %>% 
+  count(bathroom_per_person) %>% 
+  arrange(desc(n))
+```
+
+:::{.blue-text}
+The $69$ null values are preserved, as expected. 
+I won't print all the other counts to save space. 
+Only the ones that give interesting results. 
+:::
+
+
+```{r}
+df %>% count(extra_people) %>% arrange(desc(n)) %>% head(10)
+```
+
+```{r}
+df %>% count(extra_people) %>% arrange(desc(n)) %>% tail(10)
+```
+
+
+:::{.blue-text}
+The really high number of extra people allowed are really only one-offs. 
+The best thing to do? 
+Don't include this in your model!
+Moving on to the counts for non-numeric data.
+::: 
+
+```{r}
+df %>% count(host_since_year) %>% arrange(desc(n)) 
+```
+
+```{r}
+df %>% count(property_type) %>% arrange(desc(n)) 
+```
+
+:::{.blue-text}
+This is interesting. 
+There is even a treehouses! 
+:::
+
+```{r}
+df %>% count(room_type) %>% arrange(desc(n)) 
+```
+
+```{r}
+df %>% count(host_response_time) %>% arrange(desc(n)) 
+```
+
+:::{.blue-text}
+Here, that N/A value can be viewed as they just didn't respond! 
+I suggest, since it's $700+$ rows, not to use this column in your model or, when you check the `host_response_rate`, you will notice there's no $0$ there -- which means, this "N/A" is actually $0$ or no response. 
+Convert it and then turn `host_response_rate` to numeric, too. 
+:::
+
+```{r}
+df <- df %>% mutate(
+    host_response_rate = ifelse(
+        host_response_rate == 'N/A',
+        0,
+        host_response_rate),
+    host_response_rate = as.numeric(host_response_rate))
+
+psych::describe(df$host_response_rate) %>% 
+  as.data.frame() %>% 
+  dplyr::select(n, mean, sd, min, max, skew)
+```
+
+:::{.blue-text}
+Awesome. 
+Now, let's look at the outcome variable! 
+When I did the summary statistics, I skipped over `price`. 
+Let's go back. 
+The average price is $129.01$ (probably in Euro), with the median of $109$...but the standard deviation is $128.03$! It's also largely skewed to the right. 
+Let's assume the prices are per night, because that's how it's presented on Airbnb.
+I'll do the visualization of price now: 
+::: 
+
+```{r}
+df %>% filter(!is.na(price)) %>% 
+  ggplot(aes(x = price)) +
+  geom_histogram(binwidth = .25, color = "black", 
+                 fill = "white") +
+  xlab("Price")
+```
+
+:::{.blue-text}
+I can already tell that $9,000$ euros one is an outlier!
+In fact, if you arrange by the `price` in descending order: 
+:::
+
+```{r}
+head(df %>% count(price) %>% arrange(desc(price)))
+```
+
+:::{.blue-text}
+The next most expensive place is $1,495$!
+Let's see what this $9,000$ euros listing is:
+:::
+
+```{r}
+glimpse(df %>% filter(price == 9000))
+```
+
+:::{.blue-text}
+Ok. Alex has listed a $1$ bedroom-$1$ bathroom entire house/apartment that accommodates $2$ (with $1$ bed) for a minimum of $3$ nights (that's a total of $27,000$ euros!) 
+Alright, Alex is a goner tho! 
+This is unhinged behavior! 
+::: 
+
+```{r}
+df <- df %>% filter(price != 9000)
+
+
+psych::describe(df$price) %>% 
+  as.data.frame() %>% 
+  dplyr::select(n, mean, sd, median, min, max, skew)
+```
+
+:::{.blue-text}
+Much better. 
+Now, I'll count the number of null values in the `price` column and the reviews (since they had many in the $6,000$ but the data has $7,000$ rows).
+:::
+
+```{r}
+paste("Number of null values in price column: ", sum(is.na(df$price)))
+paste("Number of null values in weighted review score column: ", sum(is.na(df$weighted_review_score)))
+```
+
+:::{.blue-text}
+There are no missing price values, but a lot of null review scores. 
+Let's see what these are. 
+I suspect many just don't have any reviews.
+:::
+
+```{r}
+df %>% filter(is.na(weighted_review_score)) %>% 
+  select(number_of_reviews, review_scores_rating, weighted_review_score) %>% 
+  arrange(desc(number_of_reviews)) %>% head(10)
+```
+
+:::{.blue-text}
+Ok, so not all of them have no reviews. This is bad. 
+Let's see how many are actually $0$ and how many are other numbers
+:::
+
+```{r}
+df %>% filter(is.na(weighted_review_score)) %>% 
+  select(number_of_reviews, review_scores_rating, weighted_review_score) %>% 
+  group_by(number_of_reviews) %>% count(number_of_reviews)
+```
+
+:::{.blue-text}
+The ones that have no reviews, I can't really do anything about, right? 
+The ones with more actual reviews that don't have any value, I will drop. 
+For the others, since the review scores were'nt that badly off, I can just replace the scores with the median. 
+:::
+
+```{r}
+psych::describe(df$weighted_review_score) %>% 
+  as.data.frame() %>% 
+  select(n, mean, sd, median, min, max, skew)
+```
+
+```{r}
+df_copy <- df 
+
+df <- df %>% mutate(
+  weighted_review_score_nona = ifelse(
+    is.na(weighted_review_score),
+    median(weighted_review_score, na.rm = T), # if it's NA, replace it with median 
+    weighted_review_score  # otherwise do nothing 
+  )
+)
+```
+
+```{r}
+psych::describe(df$weighted_review_score_nona) %>% 
+  as.data.frame() %>% 
+  select(n, mean, sd, median, min, max, skew)
+
+```
+
+:::{.blue-text}
+See how close this is to the original data? 
+We should be good to go now! 
+Let's go back and check everything again. 
+Here are the columns I'm interested in for the modeling: 
+
+* `host_since_year` framed as host's experience 
+* `accommodates` 
+* `bathroom_per_person`
+* `weighted_review_score_nona`
+* `property_type`
+* `host_response_rate`
+
+Let's focus on these and see if there are any outliers. 
+First, I'll change the `host_since_year` to be the experience of the host. 
+:::
+
+```{r}
+df <- df %>% mutate(
+  host_years = 2025 - host_since_year
+)
+```
+
+```{r}
+find_iqr <- function(col){
+    q <- quantile(col, probs = c(0.25, 0.75), na.rm = TRUE)
+
+    q1 <- q[[1]] 
+    q3 <- q[[2]] 
+    
+    iqr = q3 - q1
+    lower_bound = q1 - 1.5 * iqr
+    upper_bound = q3 + 1.5 * iqr
+    outliers <- col[col < lower_bound | col > upper_bound]
+    
+    return(outliers)
+}
+```
+
+```{r}
+unique(find_iqr(df$host_years))
+unique(find_iqr(df$accommodates))
+unique(find_iqr(df$bathroom_per_person))
+unique(find_iqr(df$weighted_review_score_nona))
+unique(find_iqr(df$host_response_rate))
+```
+
+:::{.blue-text}
+* `host_years` : $17$ is the outlier, but I don't think I will include this measure in the model anyway. 
+* `accommodates`: $8, 10, 9, 16, 12, 15, 14$ are outliers. Weird numbers, I'll keep them in for now!  
+* `bathroom_per_person`: NA values are outliers! This is interesting. 
+* `weighted_review_score_nona`: this is null, so there's none. 
+* `host_response_rate`: lots of values seem to be outliers...I think this is a bad column. Let's not add it. 
+
+A note here on zipcode: it probably is a good measure, but there's a lot of typo's in it and I'm not familiar with Amesterdam, so I won't go there. 
+Try to find projects that address this to get inspiration! 
+:::
+
+```{r}
+df <- df %>% filter(!is.na(bathroom_per_person))
+```
+
+:::{.blue-text}
+Now let's figure out the relationships through visualizations and a correlation matrix.
+::: 
+
+```{r}
+corM <- Hmisc::rcorr(as.matrix(
+    df %>% select(host_since_year, accommodates, bathrooms, bedrooms,
+    beds, price, extra_people, minimum_nights, host_response_rate, weighted_review_score_nona)
+))
+
+# extract the correlation values (correlation matrix)
+reg_corM <- as.data.frame(corM$r)
+
+# remove columns and rows with all NA values
+reg_corM <- reg_corM %>%
+  dplyr::select(where(~ !all(is.na(.)))) %>%
+  filter(rowSums(is.na(.)) < ncol(.))
+
+# replace NA with 0 (optional)
+data <- as.matrix(reg_corM)
+data[is.na(data)] <- 0  # Replace NA with 0 if needed
+
+cor_values <- as.data.frame(corM$r)   
+pcor_values <- as.data.frame(corM$P) 
+
+```
+
+```{r}
+print("Correlations data: \n")
+
+round(cor_values,3)
+```
+
+
+:::{.blue-text}
+* `bathrooms` and `accommodates` are correlated ($45%$)
+* `bedrooms` and `accommodates` are highly correlated ($70%$)
+* `beds` and `accommodates` are highly correlated ($83%$)
+* `price` is correlated (highly) with `accommodates`, `bedrooms`, and `beds` 
+:::
+
+```{r}
+print("p-values for correlations: \n")
+
+round(pcor_values,3)
+```
+
+```{r}
+pheatmap::pheatmap(data,
+         main = "Heatmap of Correlation Matrix",
+         display_numbers = TRUE,  # Show correlation values
+         clustering_distance_rows = "euclidean",  # Distance metric for clustering
+         clustering_distance_cols = "euclidean",
+         clustering_method = "complete",  # Hierarchical clustering method
+         color = colorRampPalette(c("white", "lightgreen", "green"))(50))
+           
+       
+```
+
+
+```{r}
+df %>%
+    ggplot(aes(x = host_years, y = price)) +
+    geom_jitter(color = "darkred", size = 1) + 
+    labs(title = "Price changes depending on number of years the host has been active",
+         x = "Host active years",
+         y = "Listing price") +
+    theme_minimal()
+```
+
+:::{.blue-text}
+There really doesn't seem to be any relationship here. I'm not considering this in the modeling. 
+:::
+
+```{r}
+df %>%
+    ggplot(aes(x = accommodates, y = price)) +
+    geom_jitter(color = "darkred", size = 1) + 
+    geom_smooth(method = "loess", color = "blue", se = FALSE, size = 1.2) +
+    labs(title = "Price changes depending on number of people place accommodates",
+         x = "Number of people place accommodates",
+         y = "Listing price") +
+    theme_minimal()
+```
+
+:::{.blue-text}
+There might be a subtle positive correlation here.
+I've added the guide line (blue dashed line) to show this.
+:::
+
+```{r}
+df %>%
+    ggplot(aes(x = bathroom_per_person, y = price)) +
+    geom_jitter(color = "darkred", size = 1) + 
+    labs(title = "Price changes depending on number of bathrooms per person",
+         x = "Number of bathrooms per person",
+         y = "Listing price") +
+    theme_minimal()
+```
+
+:::{.blue-text}
+This almost seems like it goes up then down, it's interesting, but definitely not a linear relationship. 
+It seems like a bell shape! 
+Maybe a quadratic relationship? 
+:::
+
+```{r}
+df %>%
+    ggplot(aes(x = weighted_review_score_nona, y = price)) +
+    geom_jitter(color = "darkred", size = 1) + 
+    labs(title = "Price changes depending on weighted rating score",
+         x = "Rating score (weighted)",
+         y = "Listing price") +
+    theme_minimal()
+```
+
+:::{.blue-text}
+Not much to say here. 
+Most rooms have a high score. 
+There doesn't seem to be much of an intersting pattern. 
+::: 
+
+
+```{r}
+df %>%
+    ggplot(aes(x = host_response_rate, y = price)) +
+    geom_jitter(color = "darkred", size = 1) + 
+    geom_smooth(method = "loess", color = "blue", se = FALSE, size = 1.2) +
+    labs(title = "Price changes depending on hosts' response rate",
+         x = "Host response rate",
+         y = "Listing price") +
+    theme_minimal()
+```
+
+:::{.blue-text}
+The jitter is possibly making it look more interesting, but it's truly not! 
+Ok, I think I'm done with the numeric visualizations. What about non-numeric columns?
+
+* `city` 
+* `property_type`
+* `room_type`
+:::
+
+```{r}
+df %>% ggplot(aes(x = as.factor(city), y = price)) + 
+  geom_bar(stat = "identity", position = "dodge", fill = "darkgreen", color = "black") + 
+  labs(title = "Price changes depending on city", 
+       x = "City", 
+       y = "Listing price") + 
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+:::{.blue-text}
+Ok, maybe not that interesting. Seems like Amesterdam is the most expensive, and everything else is just not... so, I'll just group the cities together into a new column that accounts for whether or not the listing is in Amersterdam. 
+:::
+
+```{r}
+df <- df %>% mutate(
+  isAmesterdam = ifelse(
+    city == 'amsterdam',
+    1,
+    0
+  )
+)
+```
+
+```{r}
+df %>% ggplot(aes(x = as.factor(property_type), y = price), color = "darkgreen") + 
+  geom_bar(stat = "identity", position = "dodge", fill = "darkgreen", color = "black") + 
+  labs(title = "Price changes depending on property type", 
+       x = "Property type", 
+       y = "Listing price") + 
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+:::{.blue-text}
+Cool. This also looks interseting. 
+:::
+
+```{r}
+df %>% ggplot(aes(x = as.factor(room_type), y = price)) + 
+  geom_bar(stat = "identity", position = "dodge", fill = "darkgreen", color = "black") + 
+  labs(title = "Price changes depending on room type", 
+       x = "Room type", 
+       y = "Listing price") + 
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+:::{.blue-text}
+There is definitely something here! 
+Let's make sure these values are factors.
+Then, start building the model with these variables: 
+
+* `accommodates` 
+* `bathroom_per_person` (maybe a quadratic relationship)
+* `weighted_review_score_nona`
+* `isAmesterdam`
+* `property_type`
+* `room_type`
+:::
+
+```{r}
+df <- df %>% mutate(
+  fcity = as.factor(city),
+  fproperty_type = as.factor(property_type),
+  froom_type = as.factor(room_type),
+  sqbathroom_per_person = bathroom_per_person^2
+)
+```
+
+:::{.blue-text}
+I will build three models, plus a null model (with no predictors) for comparison. 
+Please try various models and read about how to pick which features to include. 
+At this point, I'm just trying to build up a model that makes sense. 
+I'm still not "training" anything! 
+
+Model 1 includes everything, model 2 drops the `weighted_review_score_nona`, and model 3 is model 1 but `bathroom_per_person` is quadratic. 
+:::
+
+```{r}
+
+nullmodel <- lm(price ~ 1, data = df)
+
+model1 <- lm(price ~ accommodates + bathroom_per_person + weighted_review_score_nona + 
+            isAmesterdam + fproperty_type + froom_type, 
+            data = df)
+
+model2 <- lm(price ~ accommodates + bathroom_per_person + 
+            isAmesterdam + fproperty_type + froom_type, 
+            data = df)
+
+model3 <- lm(price ~ accommodates + sqbathroom_per_person + 
+            weighted_review_score_nona + isAmesterdam + 
+            fproperty_type + froom_type, 
+            data = df)
+
+
+```
+
+```{r}
+summary(nullmodel)
+```
+
+
+```{r}
+summary(model1)
+```
+
+```{r}
+summary(model2)
+```
+
+
+```{r}
+summary(model3)
+```
+
+
+:::{.blue-text}
+Testing which model is the best using ANOVA. 
+The null hypothesis is that the two models are the same. 
+:::
+
+
+```{r}
+anova(nullmodel, model1, test = "Chisq") # you can force it to do a chi-squared test.
+```
+
+:::{.blue-text}
+We see from the test that the null hypothesis is rejected. 
+So, model 1 and nullmodel are different. 
+Therefore, since model 1 actually does more explaining about the outcome, model 1 is the better model from the two. 
+Additionaly, you can look at the Residual Sums of Squares (RSS), which is smaller for model 1 (the second row). 
+This means model 1 is the better model. 
+:::
+
+```{r}
+anova(model1, model2)
+```
+
+:::{.blue-text}
+Model 1 and model 2 are different. 
+The residual sum of square in model 1 is actually lower, which means this is the better model. 
+Now compare it with model 3. 
+However, since both models are essentially the same -- this will give us no "test results": 
+:::
+
+```{r}
+anova(model1, model3, test = "Chisq")
+```
+
+:::{.blue-text}
+Instead, we can manually calculate some metrics like AIC or the mean squared error. 
+:::
+
+
+```{r}
+AIC(model1, model3)
+```
+
+```{r}
+paste("Model 1 MSE: ", mean(residuals(model1)^2))
+paste("Model 3 MSE: ", mean(residuals(model3)^2))
+```
+
+:::{.blue-text}
+The AIC values are barely any different, which really just means this addition of the squared representation didn't improve things.
+In fact, the AIC went up, which is not a good thing. 
+Similar to this, the mean square error for model 3 is actually a little higher, too. 
+So, model 1 is the best. 
+Let's roll with model 1 then, and start training the data, which means, SPLIT!
+Before that, I will mean center the numeric variables. 
+This is just to not get a negative intercept! (run the nonmeancentered version to see the difference).
+:::
+
+
+```{r}
+df <- df %>% mutate(
+  accommodates_c = accommodates - mean(accommodates), 
+  bathroom_per_person_c = bathroom_per_person - mean(bathroom_per_person),
+  weighted_review_score_nona_c = weighted_review_score_nona - mean(weighted_review_score_nona), 
+  isAmesterdam = as.factor(isAmesterdam)
+)
+```
+
+:::{.blue-text}
+Before we split the data, since there are three categorical variables, I need to check something -- what if there is one value for the category? Then it might show up in the test set but not training set. 
+Since this model cannot guess on un-seen data, I need to make sure it works with only observed data. 
+So, let's check for this --- in fact, there are various property types that are repeated only once or twice: Chalet, Dorm, Earth House, Hut, Treehouse and Yurt. 
+I will add these into a new category called "odd", since they're pretty odd! 
+:::
+
+```{r}
+df <- df %>% mutate(
+    property_type = ifelse(
+        property_type %in% c('chalet', 'dorm', 'eart house', 'hut', 'treehouse', 'yurt'),
+        'odd',
+        property_type
+    ),
+    fproperty_type = as.factor(property_type)
+)
+```
+
+
+```{r}
+set.seed(1)
+index <- sample(nrow(df),
+                nrow(df)*0.8)
+
+df_train <- df[index, ]
+df_test <- df[-index, ]
+
+#df_train$fproperty_type <- fct_lump_min(df_train$fproperty_type, min = 15)
+#df_test$fproperty_type <- fct_lump_min(df_test$fproperty_type, min = 15)
+
+
+# another way 
+split <- initial_split(df, prop = 0.8, strata = fproperty_type) 
+train <- training(split)
+test <- testing(split)
+
+```
+
+
+```{r}
+model_q3_nonmeancentered <- lm(price ~ accommodates + bathroom_per_person + 
+            weighted_review_score_nona + isAmesterdam + 
+            fproperty_type + froom_type, 
+            data = df_train)
+
+model_q3 <- lm(price ~ accommodates_c + bathroom_per_person_c + 
+            weighted_review_score_nona_c + isAmesterdam + 
+            fproperty_type + froom_type, 
+            data = df_train)
+
+model_q3_nonmeancentered2 <- lm(price ~ accommodates + bathroom_per_person + 
+            weighted_review_score_nona + isAmesterdam + 
+            fproperty_type + froom_type, 
+            data = train)
+
+model_q32 <- lm(price ~ accommodates_c + bathroom_per_person_c + 
+            weighted_review_score_nona_c + isAmesterdam + 
+            fproperty_type + froom_type, 
+            data = train)
+
+```
+
+
+```{r}
+summary(model_q3)
+```
+
+:::{.blue-text}
+Interpretation: 
+
+* with each one more person accommodated, the price goes up $24$ euros 
+* a one unit increase in bathroom per person adds $46$ euros to the price
+* a one unit increase in review score is associated with $2.3$ euros increase in price 
+* It seems that while not significant (p-value $>0.05$), listings in Amesterdam are actually $13$ euros more expensive 
+* The reference level for property type is apartment, so everything here should be compared with apartment (I'll only go over the significant relationships): 
+  * compared to an apartment, a bed and breakfast is almost $15$ euros more expensive 
+  * compared to an apartment, a camper/rv is actually $77$ euros less expensive 
+  * compared to an apartment, a house is almost $22$ euros more expensive 
+  * compared to an apartment, other types of property are on average $88.4$ euros more expensive. 
+* The reference level for room type is the entire house or apartment, so I compare the results to this: 
+  * compared to the entire house or apartment, a private room is $45$ euros cheaper
+  * compared to the entire house or apartment, a shared room is $70$ euros cheaper 
+
+Read this very helpful website ![Towards Data Science](https://towardsdatascience.com/understanding-linear-regression-output-in-r-7a9cbda948b3/).
+::: 
+
+
+#### Model Diagnositcs 
+
+:::{.blue-text}
+* Residuals vs Fitted > Are the variances of the residuals constant? 
+* QQnorm > Are the residuals norma? 
+* How accurate is your model (MSE, Score, etc.) 
+* Visualize the predictions and the line you came up with! 
+:::
+
+
+```{r}
+plot(model_q3$fitted.values, 
+     model_q3$residuals) + abline(h = 0, col = "red")
+```
+
+:::{.blue-text}
+Ok, it doesn't look funnel shaped so this is fine-ish. 
+::: 
+
+
+```{r}
+predictions <- predict(
+    model_q3, 
+    newdata = test 
+    #interval = "confidence"
+)
+
+df_test$predictions <- predictions
+
+```
+
+
+```{r}
+mean((df_test$predictions - df_test$price)^2)
+
+```
+
+:::{.blue-text}
+This is your mean squared erros. The lower the better, so this is kind of high. 
+::: 
+
+
+```{r}
+plot(model_q3)
+```
+
+:::{.blue-text}
+The qq-plot kind of scares me if I'm being completely honest! Let's focus on that: 
+::: 
+
+```{r}
+qqnorm(model_q3$residuals)
+qqline(model_q3$residuals, col = "blue")
+```
+
+:::{.blue-text}
+Shapiro test's null hypothesis is: the population is normally distributed.
+:::
+
+```{r}
+# To avoid getting this: > Error in shapiro.test(model_q3$residuals) : sample size must be between 3 and 5000, just sample 5,000 of the residuals 
+
+shapiro.test(sample(model_q3$residuals, 5000))
+```
+
+:::{.blue-text}
+Oh great! It's not! So, now what? 
+:::
+
+::: {.custom-box style="background-color: #fff8dc; padding: 1em; border-radius: 5px;"}
+If a parametric family can be identified, then one can often achieve greatest power by explicit modeling. This can be done through generalized linear models (15). If no parametric family is found, a transformation of either the independent or dependent variables might help. The Box-Cox transform (16) provides a model-based transformation of the dependent variable. Tukey’s ladder of transformations (17) provides a graphics-based method of choosing transformation of both the dependent and independent variables.
+
+This is from: [10.3945/ajcn.115.113498](https://doi.org/10.3945/ajcn.115.113498). 
+
+This is beyond the scope of your course, so, all I need from you is to acknowledge that this assumption does not hold! That basically mean, this isn't the best model. 
+:::
+
+```{r}
+plot(model_q3$residuals, type = "l")
+```
+
+```{r}
+hist(model_q3$residuals, color = "darkgreen")
+```
+
+```{r}
+ggplot(df_test, aes(x = predictions, y = price)) +
+  geom_point(alpha = 0.4, color = "darkred") +       
+  geom_abline(intercept = 0, slope = 1, color = "blue", linetype = 2, size = 1) + 
+  labs(title = "Predicted vs actual prices (test)",
+       x = "Predicted price",
+       y = "Actual price") +
+  theme_minimal()
+```
+
+
+```{r}
+ggplot(df_test, aes(x = bathroom_per_person, y = price)) +
+  geom_point(alpha = 0.4, color = "gray50") +
+  geom_line(aes(y = predictions), color = "blue", size = 1) +
+  labs(title = "Model fit on test set",
+       x = "Bathrooms per person",
+       y = "Price") +
+  theme_minimal()
+```
+
+
+### A better model? 
+
+:::{.blue-text}
+You may be able to build a better model. Let's see this. 
+:::
+
+
+```{r}
+df$price_log <- log(df$price)
+
+df_train <- df[index, ]
+df_test <- df[-index, ]
+
+
+model_log <- lm(price_log ~ accommodates_c + bathroom_per_person_c + 
+            weighted_review_score_nona_c + isAmesterdam + 
+            fproperty_type + froom_type, 
+            data = df_train)
+
+summary(model_log)
+
+```
+
+
+
+```{r}
+plot(model_log$fitted.values, model_log$residuals) + abline(h = 0, col = "red")
+```
+
+
+```{r}
+predictionsLog <- predict(
+    model_log, 
+    newdata = df_test
+)
+
+df_test$predictionsLog <- predictionsLog
+
+```
+
+
+```{r}
+mean((df_test$predictionsLog - df_test$price_log)^2)
+
+```
+
+
+```{r}
+plot(model_log)
+
+```
+
+
+```{r}
+qqnorm(model_log$residuals)
+qqline(model_log$residuals, col = "blue")
+```
+
+
+```{r}
+shapiro.test(sample(model_log$residuals, 5000))
+
+```
+
+
+```{r}
+plot(model_log$residuals, type = "l")
+
+```
+
+
+```{r}
+hist(model_log$residuals)
+
+```
+
+
+
+```{r}
+ggplot(df_test, aes(x = predictionsLog, y = price_log)) +
+  geom_point(alpha = 0.4, color = "darkred") +       
+  geom_abline(intercept = 0, slope = 1, color = "blue", linetype = 2, size = 1) + 
+  labs(title = "Predicted vs actual prices (test), log model",
+       x = "Predicted price (log)",
+       y = "Actual price (log)") +
+  theme_minimal()
+```
+
+
+```{r}
+ggplot(df_test, aes(x = bathroom_per_person, y = price_log)) +
+  geom_point(alpha = 0.4, color = "gray50") +
+  geom_line(aes(y = predictionsLog), color = "blue", size = 1.2) +
+  labs(title = "Model fit on test set (log)",
+       x = "Bathrooms per person (log)",
+       y = "Price") +
+  theme_minimal()
+```

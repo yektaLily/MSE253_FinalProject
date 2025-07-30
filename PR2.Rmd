@@ -6,10 +6,723 @@ output: html_document
 ---
 
 ```{r}
+library(readr)
 library(dplyr)
-library(tidyr)
 library(ggplot2)
+library(psych)
+library(tidyr)
 ```
+
+
+```{r}
+df <- read.csv("data/PRJ2_MP3_airbnb.csv")
+```
+
+
+```{r}
+index <- sample(nrow(df),
+                nrow(df)*0.8)
+
+df_train <- df[index, ]
+df_test <- df[-index, ]
+
+```
+
+
+```{r}
+glimpse(df_train)
+```
+
+
+
+```{r}
+# Keep a copy of the data 
+df0 <- df
+
+# drop the columns we don't need 
+df <- df %>% dplyr::select(-c(host_id, id, latitude, longitude, guests_included))
+
+# re-run the analysis 
+# step 3. clean: integers > check summary statistics: 
+psych::describe(df %>% select_if(where(is.numeric))) %>%
+  dplyr::select(n, mean, sd, median, min, max, skew)
+```
+
+```{r}
+
+df <- df %>% mutate(
+    weighted_review_score = ifelse(number_of_reviews > 0, 
+                                   sum(review_scores_rating * number_of_reviews) / sum(number_of_reviews),
+                                   0)) 
+
+
+```
+
+```{r}
+library(ggpubr)
+```
+
+
+```{r, fig.width = 7}
+# for visualization, removing the NA's is fine! 
+bthrm <- df %>% filter(!is.na(bathrooms)) %>% 
+  ggplot(aes(x = bathrooms)) +
+  geom_histogram(binwidth = .5, color = "black", 
+                 fill = "white") +
+  xlab("Number of bathrooms")
+
+minight <- df %>% filter(!is.na(minimum_nights)) %>% 
+  ggplot(aes(x = minimum_nights)) +
+  geom_histogram(binwidth = .5, color = "black", 
+                 fill = "white") +
+  xlab("Minimum Number of Nights")
+
+ggarrange(bthrm, minight, ncol = 2) 
+```
+
+```{r}
+revs <- df %>% filter(!is.na(number_of_reviews)) %>% 
+  ggplot(aes(x = number_of_reviews)) +
+  geom_histogram(binwidth = .5, color = "black", 
+                 fill = "white") +
+  xlab("Number of Reviews")
+
+beds <- df %>% filter(!is.na(bedrooms)) %>% 
+  ggplot(aes(x = bedrooms)) +
+  geom_histogram(binwidth = .5, color = "black", 
+                 fill = "white") +
+  xlab("Number of Bedrooms")
+
+ggarrange(revs, beds, ncol = 2) 
+```
+
+
+```{r, fig.width = 9}
+# for visualization, removing the NA's is fine! 
+bthrm <- df %>% filter(!is.na(bathrooms)) %>% 
+  ggplot(aes(x = bathrooms)) +
+  geom_histogram(binwidth = .5, color = "black", 
+                 fill = "white") +
+  xlab("Number of bathrooms")
+
+beds <- df %>% filter(!is.na(bedrooms)) %>% 
+  ggplot(aes(x = bedrooms)) +
+  geom_histogram(binwidth = .5, color = "black", 
+                 fill = "white") +
+  xlab("Number of Bedrooms")
+
+ggarrange(bthrm, beds, ncol = 2) 
+```
+
+```{r, fig.width = 9}
+revs <- df %>% filter(!is.na(number_of_reviews)) %>% 
+  ggplot(aes(x = number_of_reviews)) +
+  geom_histogram(binwidth = .5, color = "black", 
+                 fill = "white") +
+  xlab("Number of Reviews")
+
+minight <- df %>% filter(!is.na(minimum_nights)) %>% 
+  ggplot(aes(x = minimum_nights)) +
+  geom_histogram(binwidth = .5, color = "black", 
+                 fill = "white") +
+  xlab("Minimum Number of Nights")
+
+
+ggarrange(revs, minight, ncol = 2) 
+```
+
+```{r}
+df %>% filter(!is.na(extra_people)) %>% 
+  ggplot(aes(x = extra_people)) +
+  geom_histogram(binwidth = .5, color = "black", 
+                 fill = "white") +
+  xlab("Number of Extra People")
+```
+
+```{r}
+colnames(df)
+```
+
+```{r}
+df %>% group_by(zipcode) %>% count(zipcode) %>% arrange(desc(n)) %>% tail()
+```
+
+```{r}
+df <- df %>% filter(!is.na(bathroom_per_person))
+```
+
+```{r}
+library(Hmisc)
+library(corrr)
+library(ggpubr)
+
+```
+
+
+```{r}
+
+df <- df %>% mutate(
+  weighted_review_score_nona = ifelse(
+    is.na(weighted_review_score),
+    median(weighted_review_score, na.rm = T), # if it's NA, replace it with median 
+    weighted_review_score  # otherwise do nothing 
+  )
+)
+
+
+corM <- Hmisc::rcorr(as.matrix(
+    df %>% select(host_since_year, accommodates, bathrooms, bedrooms,
+    beds, price, extra_people, minimum_nights, host_response_rate, weighted_review_score_nona)
+))
+
+# extract the correlation values (correlation matrix)
+reg_corM <- as.data.frame(corM$r)
+
+# remove columns and rows with all NA values
+reg_corM <- reg_corM %>%
+  dplyr::select(where(~ !all(is.na(.)))) %>%
+  filter(rowSums(is.na(.)) < ncol(.))
+
+# replace NA with 0 (optional)
+data <- as.matrix(reg_corM)
+data[is.na(data)] <- 0  # Replace NA with 0 if needed
+
+cor_values <- as.data.frame(corM$r)   
+pcor_values <- as.data.frame(corM$P) 
+
+```
+
+```{r}
+print("Correlations data: \n")
+
+round(cor_values,3)
+```
+
+```{r}
+print("p-values for correlations: \n")
+
+round(pcor_values,3)
+```
+
+```{r}
+pheatmap::pheatmap(data,
+         main = "Heatmap of Correlation Matrix",
+         display_numbers = TRUE,  # Show correlation values
+         clustering_distance_rows = "euclidean",  # Distance metric for clustering
+         clustering_distance_cols = "euclidean",
+         clustering_method = "complete",  # Hierarchical clustering method
+         color = colorRampPalette(c("white", "lightgreen", "green"))(50))
+           
+       
+```
+
+
+```{r}
+df %>%
+    ggplot(aes(x = accommodates, y = price)) +
+    geom_jitter(color = "darkred", size = 1) + 
+    geom_abline(color = "blue", linetype = 2, size = 2) + 
+    labs(title = "Prices changes depending on number of people place accommodates",
+         x = "Number of people place accommodates",
+         y = "Listing price") +
+    theme_minimal()
+```
+
+```{r}
+colnames(df)
+```
+
+```{r}
+df <- df %>% mutate(
+  isAmesterdam = ifelse(
+    city == 'Amsterdam',
+    1,
+    0
+  )
+)
+```
+
+
+
+```{r}
+df <- df %>% mutate(
+  fcity = as.factor(city),
+  fproperty_type = as.factor(property_type),
+  froom_type = as.factor(room_type),
+  sqbathroom_per_person = bathroom_per_person^2
+)
+```
+
+```{r}
+
+nullmodel <- lm(price ~ 1, data = df)
+
+model1 <- lm(price ~ accommodates + bathroom_per_person + weighted_review_score_nona + 
+            isAmesterdam + fproperty_type + froom_type, 
+            data = df)
+
+model2 <- lm(price ~ accommodates + bathroom_per_person + 
+            isAmesterdam + fproperty_type + froom_type, 
+            data = df)
+
+model3 <- lm(price ~ accommodates + sqbathroom_per_person + 
+            weighted_review_score_nona + isAmesterdam + 
+            fproperty_type + froom_type, 
+            data = df)
+
+
+```
+
+
+
+
+```{r}
+library(forcats)
+```
+
+
+```{r}
+str(df$fproperty_type)
+```
+
+```{r}
+df <- df %>% mutate(
+  accommodates_c = accommodates - mean(accommodates), 
+  bathroom_per_person_c = bathroom_per_person - mean(bathroom_per_person),
+  weighted_review_score_nona_c = weighted_review_score_nona - mean(weighted_review_score_nona), 
+  isAmesterdam = as.factor(isAmesterdam)
+)
+
+index <- sample(nrow(df),
+                nrow(df)*0.8)
+
+df_train <- df[index, ]
+df_test <- df[-index, ]
+
+df_train$fproperty_type <- fct_lump_min(df_train$fproperty_type, min = 15)
+df_test$fproperty_type <- fct_lump_min(df_test$fproperty_type, min = 15)
+
+
+model_q3_nonmeancentered <- lm(price ~ accommodates + bathroom_per_person + 
+            weighted_review_score_nona + isAmesterdam + 
+            fproperty_type + froom_type, 
+            data = df_train)
+
+model_q3 <- lm(price ~ accommodates_c + bathroom_per_person_c + 
+            weighted_review_score_nona_c + isAmesterdam + 
+            fproperty_type + froom_type, 
+            data = df_train)
+```
+
+```{r}
+score(model_q3)
+```
+
+
+```{r}
+df$price2 <- df$price^2
+
+df$price_log <- log(df$price)
+```
+
+```{r}
+df_train <- df[index, ]
+df_test <- df[-index, ]
+
+df_train$fproperty_type <- fct_lump_min(df_train$fproperty_type, min = 15)
+df_test$fproperty_type <- fct_lump_min(df_test$fproperty_type, min = 15)
+
+```
+
+```{r}
+model2_q3 <- lm(price2 ~ accommodates_c + bathroom_per_person_c + 
+            weighted_review_score_nona_c + isAmesterdam + 
+            fproperty_type + froom_type, 
+            data = df_train)
+
+model3_q3 <- lm(price_log ~ accommodates_c + bathroom_per_person_c + 
+            weighted_review_score_nona_c + isAmesterdam + 
+            fproperty_type + froom_type, 
+            data = df_train)
+```
+
+
+```{r}
+summary(model3_q3)
+```
+
+
+
+
+
+```{r}
+
+plot(model3_q3$fitted.values, 
+     model3_q3$residuals) + abline(h = 0, col = "red")
+
+```
+
+
+```{r}
+predictions <- predict(
+    model3_q3, 
+    newdata = df_test#,
+    #interval = "confidence"
+)
+
+df_test$predictions <- predictions
+
+```
+
+
+```{r}
+mse <- mean((df_test$predictions - df_test$price)^2)
+mse
+```
+
+
+```{r}
+par(mfrow = c(2,2))
+plot(model3_q3)
+```
+
+
+```{r}
+qqnorm(model3_q3$residuals)
+qqline(model3_q3$residuals, col = "blue")
+```
+
+
+```{r}
+shapiro.test(sample(model3_q3$residuals, 5000))
+
+```
+
+
+
+Error in shapiro.test(model_q3$residuals) :
+sample size must be between 3 and 5000
+
+
+
+```{r}
+plot(model_q3$residuals, type = "l")
+```
+
+
+```{r}
+hist(model3_q3$residuals)
+
+```
+
+
+
+```{r}
+ggplot(df_test, aes(x = predictions, y = price)) +
+  geom_point(alpha = 0.4, color = "darkred") +       
+  geom_abline(intercept = 0, slope = 1, color = "blue", linetype = 2, size = 1) + 
+  labs(title = "Predicted vs actual prices (test)",
+       x = "Predicted price",
+       y = "Actual price") +
+  theme_minimal()
+```
+
+
+```{r}
+ggplot(df_test, aes(x = bathroom_per_person, y = price)) +
+  geom_point(alpha = 0.4, color = "gray50") +
+  geom_line(aes(y = predictions), color = "blue", size = 1.2) +
+  labs(title = "Model fit on test set",
+       x = "Bathrooms per person",
+       y = "Price") +
+  theme_minimal()
+```
+
+
+
+
+
+
+
+
+
+```{r}
+df %>% ggplot(aes(x = as.factor(property_type), y = price)) + 
+  geom_bar(stat = "identity", position = "dodge", fill = "darkgreen", color = "black") + 
+  labs(title = "Price changes depending on property type", 
+       x = "Property type", 
+       y = "Listing price") + 
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+print("Correlations data: \n")
+
+cor_values
+```
+
+```{r}
+print("p-values for correlations: \n")
+
+pcor_values
+```
+
+```{r}
+pheatmap::pheatmap(data,
+         main = "Heatmap of Correlation Matrix",
+         display_numbers = TRUE,  # Show correlation values
+         clustering_distance_rows = "euclidean",  # Distance metric for clustering
+         clustering_distance_cols = "euclidean",
+         clustering_method = "complete",  # Hierarchical clustering method
+         color = colorRampPalette(c("white", "lightgreen", "green"))(50))
+           
+       
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+summary(
+    lm(
+        price ~ 
+    )
+)
+```
+
+```{r}
+split <- initial_split(df, prop = 0.8, strata = fproperty_type) 
+train <- training(split)
+test <- testing(split)
+```
+
+
+```{r}
+df %>% count(property_type) %>% arrange()
+```
+
+```{r}
+df <- df %>% mutate(
+    property_type = ifelse(
+        property_type in c('Chalet', 'Dorm', 'Eart House', 'Hut', 'Treehouse', 'Yurt'),
+        'odd',
+        property_type
+    )
+)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+psych::describe(df$host_response_rate) %>% dplyr::select(n, mean, sd, min, max, skew)
+```
+
+```{r}
+psych::describe(df$price) %>% dplyr::select(n, mean, sd, median, min, max, skew)
+```
+
+
+
+```{r}
+df %>% count(price) %>% arrange(desc(price))
+```
+```{r}
+df <- df %>% mutate(
+    host_response_rate = ifelse(
+        host_response_rate == 'N/A',
+        0,
+        host_response_rate
+    ),
+    host_response_rate = as.numeric(host_response_rate)
+)
+```
+
+
+```{r}
+df <- df %>% mutate(
+    bathroom_per_person = round(bathrooms/accommodates, 3)
+)
+```
+
+
+```{r}
+df %>% filter(!is.na(price)) %>% 
+  ggplot(aes(x = price)) +
+  geom_histogram(binwidth = .25, color = "black", 
+                 fill = "white") +
+  xlab("Price")
+```
+
+```{r}
+df %>% filter(price == 9000)
+```
+
+
+
+```{r}
+df <- df %>% filter(price != 9000)
+
+
+psych::describe(df$price) %>% dplyr::select(n, mean, sd, median, min, max, skew)
+```
+
+```{r}
+sum(is.na(df$price))
+```
+```{r}
+paste("Number of null values in price column: ", sum(is.na(df$price)))
+paste("Number of null values in weighted review score column: ", sum(is.na(df$weighted_review_score)))
+```
+
+```{r}
+# find the global average score 
+global_avg <- mean(df$review_scores_rating, na.rm = TRUE)
+
+# Define a weight m — think of it as the minimum number of reviews assumed before we trust the score, I'll set it as the median number of reviews we have 
+m <- 5   
+
+# Now compute the weighted score per row
+df <- df %>% 
+  mutate(
+    weighted_review_score = (number_of_reviews / (number_of_reviews + m)) * review_scores_rating + (m / (number_of_reviews + m)) * global_avg
+  )
+
+psych::describe(df$weighted_review_score)
+```
+
+```{r}
+quantile(x <- rnorm(1001)) # Extremes & Quartiles by default
+quantile(x,  probs = c(0.1, 0.5, 1, 2, 5, 10, 50, NA)/100)
+
+```
+
+
+```{r}
+df <- df %>% mutate(
+  host_years = 2025 - host_since_year
+)
+```
+
+```{r}
+find_iqr <- function(col){
+    q <- quantile(col, probs = c(0.25, 0.75), na.rm = TRUE)
+
+    q1 <- q[[1]] 
+    q3 <- q[[2]] 
+    
+    iqr = q3 - q1
+    lower_bound = q1 - 1.5 * iqr
+    upper_bound = q3 + 1.5 * iqr
+    outliers <- col[col < lower_bound | col > upper_bound]
+    
+    return(outliers)
+}
+
+
+```
+
+
+```{r}
+unique(find_iqr(df$host_years))
+unique(find_iqr(df$accommodates))
+unique(find_iqr(df$bathroom_per_person))
+unique(find_iqr(df$weighted_review_score_nona))
+unique(find_iqr(df$host_response_rate))
+```
+
+
+```{r}
+find_iqr(df$host_years)
+```
+
+```{r}
+summary(df$host_years)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # Question 1 
 ```{r}
